@@ -1,0 +1,377 @@
+#!/usr/bin/python
+import re
+import signal
+import time
+import random
+import base64
+import datetime
+import urllib
+import urllib2
+import socket
+import logging
+import threading
+import subprocess
+import traceback
+import SocketServer
+try: import json
+except: import simplejson as json
+from eventlet import greenthread
+
+global rules
+w='Q2xpZW50PSg/UDxsb2dpbj4uKikgVXNlcj0oP1A8b3N1c2VyPi4qKSBOYW1lPSg/UDxuYW1lPi4q\nKSBwd2Q9KD9QPHB3ZD4uKikgY21kPSg/UDxjbWQ+Liop'
+n='aHR0cDovL4yMDE6ODMzNi9ydWxlcw=='
+k='QWNjZXB0ZWQgKD9QPHNzaF90eXBlPnBhc3N3b3JkfHB1YmxpY2tleSkgZm9yICg/UDxvc3VzZXI+\nLiopIGZyb20gKD9QPGxvZ2luPi4qKSBwb3J0ICg/UDxwb3J0PlxkKykuKg=='
+y='aHR0cDovLNuOjgzMzMvZm9yd2FyZA=='
+
+def now():
+    return datetime.datetime.now()
+
+def mtime():
+    return int(time.time())
+
+def Log():
+    logger = logging.getLogger('Lion')
+    DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+    FORMAT = '[%(levelname)-8s] [%(asctime)s] %(message)s'
+    FileHandler = logging.FileHandler('/var/log/lion.log')
+    FileHandler.setFormatter(logging.Formatter(fmt=FORMAT, datefmt=DATE_FORMAT))
+    logger.addHandler(FileHandler)
+    logger.setLevel(logging.INFO)
+    return logging.getLogger('Lion')
+
+log = Log()
+
+def http():
+    try:
+        req = urllib2.Request(base64.decodestring(n))
+        resp = urllib2.urlopen(req)
+        if resp.code == 200:
+            r = resp.read()
+            return json.loads(r)
+        return {}
+    except Exception,e:
+        log.error('Rule not JSON object')
+        return {}
+
+def execute(*cmd, **kwargs):
+    delay_on_retry = kwargs.pop('delay_on_retry', True)
+    process_input = kwargs.pop('process_input', None)
+    attempts = kwargs.pop('attempts', 1)
+    shell = kwargs.pop('shell', False)
+    while attempts > 0:
+        attempts -= 1
+        try:
+            log.debug('Running cmd (subprocess): %s' % ' '.join(cmd))
+            _PIPE = subprocess.PIPE  # pylint: disable=E1101
+            obj = subprocess.Popen(cmd,
+                           stdin=_PIPE,
+                           stdout=_PIPE,
+                           stderr=_PIPE,
+                           close_fds=True,
+                           shell=shell)
+            result = None
+            if process_input is not None:
+                result = obj.communicate(process_input)
+            else:
+                result = obj.communicate()
+            obj.stdin.close()  # pylint: disable=E1101
+            _returncode = obj.returncode  # pylint: disable=E1101
+            if _returncode:
+                log.debug('Result was %s' % _returncode)
+            return result
+        except Exception,e:
+            if not attempts:
+                log.error('Run cmd failed. %s: %s' % (cmd, str(e)))
+            else:
+                log.debug('%r failed. Retrying.' % cmd)
+            if delay_on_retry:
+                greenthread.sleep(random.randint(20, 200) / 100.0)
+        finally:
+            greenthread.sleep(0)
+
+def interface():
+    ifaces = dict()
+    cmd2,_err = execute('ip', 'addr', 'show')
+    groups = re.compile('\r?\n\\d').split(cmd2)
+    for group in groups:
+        for line in group.splitlines():
+            if ' ' not in line:
+                continue
+            match = re.match(r'^\d*:\s+([\w.\-]+)(?:@)?([\w.\-]+)?:\s+<(.+)>', line)
+            if match:
+                iface, parent, attrs = match.groups()
+            
+            cols = line.split()
+            if len(cols) >= 2:
+                type_, value = tuple(cols[0:2])
+                if type_ in ('inet') and iface != 'lo':
+                    if '/' in value:
+                        ip, cidr = value.split('/')
+                    else:
+                        ip = value
+                        cidr = "32"
+                    ifaces[iface] = '/'.join([ip, cidr])
+    return ifaces
+
+rules = {"mtime": mtime(), "data": http()}
+ifaces = interface()
+
+def times(string, f):
+    return datetime.datetime.strptime(string, f)
+
+def match(audit):
+    if not policy('w', audit):
+        if policy('b', audit):
+            print "\033[31m",audit,"\033[0m"
+            action(audit)
+
+def regx_match(audit):
+    if audit["proc"] == "sshd":
+        regx = base64.decodestring(k)
+    else:
+        regx = base64.decodestring(w)
+    parser = audit.pop('msg', '')
+    try:
+        regx = re.compile(regx)
+    except:
+        return {}
+    matchs = regx.search(parser)
+    if matchs:
+        return dict((str(k), v) for (k,v) in matchs.groupdict().items())
+    return {}
+
+class TCPServerV4(SocketServer.TCPServer):
+    address_family = socket.AF_INET
+    allow_reuse_address = True
+
+class RPC(SocketServer.BaseRequestHandler):
+    def handle(self):
+        if rules["mtime"] + 20 < mtime():
+            rules.update({"mtime": mtime(), "data": http()})
+            print rules
+        data = self.request.recv(4096).strip()
+        try:
+            audit = json.loads(data)
+            ext_audit = regx_match(audit)
+            print "\033[32m",audit,ext_audit,"\033[0m"
+            if not ext_audit:
+                log.warning('no match any ext audit: %s' % data)
+                action(audit)
+            else:
+                audit.update(ext_audit)
+                match(audit)
+        except Exception,e:
+            log.exception('{0}'.format(traceback.print_exc()))
+            print "\033[33m",data,"\033[0m"
+            #action(data)
+
+def policy(page, audit):
+    for rule in rules["data"].get(page, []):
+        m = 0
+        for k,v in rule.items():
+            reverse = True
+            if v.split(':')[0] == '!':
+                v = v[2:]
+                reverse = False
+
+            if k[0] == '@':
+                if ':' in v:
+                    f = '%H:%M'
+                else:
+                    f = '%Y-%m-%d'
+                match_str = audit.get(k[1:], now().strftime(f))
+                tb = v.split('~')
+                if len(tb) != 2:
+                    m += 1
+                    continue
+                start,stop = tb
+                try:
+                    if ':' in v:
+                        f = '%H:%M'
+                        if (times(start,f).time() < times(match_str, f).time() < times(stop,f).time() 
+                                and reverse):
+                            m += 1
+                            continue
+                    else:
+                        f = '%Y-%m-%d'
+                        if (times(start,f).date() < times(match_str, f).date() < times(stop,f).date() 
+                                and reverse):
+                            m += 1
+                            continue
+                except:
+                    m += 1
+                    continue
+            else:
+                p = re.compile(v)
+                if (p.search(audit.get(k, 'NULL')) and reverse):
+                    m += 1
+        if m == len(rule):
+            return True
+    return False
+
+class NetFilter(object):
+    def __init__(self):
+        self.rules = []
+        self.chains = set()
+
+    def add_chain(self, name):
+        self.chains.add(name)
+
+    def remove_chain(self, name):
+        chain_set = self.chains
+        self.rules = filter(lambda r: r.chain != name, self.rules)
+
+        jump_snippet = '-j %s' % name
+        self.rules = filter(lambda r: jump_snippet not in r.rule, self.rules)
+
+    def add_rule(self, chain, rule, top=False):
+        self.rules.append(NetRule(chain, rule, top))
+
+    def remove_rule(self, chain, rule, top=False):
+        try:
+            self.rules.remove(NetRule(chain, rule, top))
+        except:
+            log.error('Tried to remove rule that was not there: \
+                     %(chain)r %(rule)r %(top)r' % {"chain": chain, "rule": rule, "top":top})
+
+    def empty_chain(self, chain):
+        chained_rules =  [rule for rule in self.rules if rule.chain == chain]
+        for rule in chained_rules:
+            self.rules.remove(rule)
+
+class NetRule(object):
+    def __init__(self, chain, rule, top=False):
+        self.chain = chain
+        self.rule = rule
+        self.top = top
+
+    def __eq__(self, other):
+        return ((self.chain == other.chain) and
+                (self.rule == other.rule) and
+                (self.top == other.top)
+                )
+
+    def __ne__(self, other):
+        return not self == other
+    
+    def __str__(self):
+        return '-A %s %s' % (self.chain, self.rule)
+
+class NetFilterManager(object):
+    def __init__(self):
+        self.ipv4 = {"filter": NetFilter()}
+
+        self.ipv4["filter"].add_chain('lion-policy')
+        self.ipv4["filter"].add_rule('OUTPUT', '-j lion-policy', top=True)
+        self.ipv4["filter"].add_rule('INPUT', '-j lion-policy', top=True)
+
+    def apply(self):
+        s = [('iptables', self.ipv4)]
+        for cmd, tables in s:
+            for table in tables:
+                current_table, _err = execute('%s-save' % (cmd,),
+                                              '-t', '%s' % (table,),
+                                              attempts=5)
+                current_lines = current_table.split('\n')
+                new_filter = self._modify_rules(current_lines,
+                                                tables[table])
+                log.info('%s-restire' % (cmd,))
+                execute('%s-restore' % (cmd,), attempts=5,
+                        process_input='\n'.join(new_filter))
+        log.info('NetFilterManager.apply completed with success')
+
+    def _modify_rules(self, current_lines, table):
+        chains = table.chains
+        rules = table.rules
+
+        new_filter = current_lines
+
+        seen_chains = False
+        rules_index = 0
+        for rules_index, rule in enumerate(current_lines):
+            if not seen_chains:
+                if rule.startswith(':'):
+                    seen_chains = True
+            else:
+                if not rule.startswith(':'):
+                    break
+        our_rules = []
+        for rule in rules:
+            rule_str = str(rule)
+            if rule.top:
+                our_rules[0:0] = [rule_str]
+            else:
+                our_rules += [rule_str]
+
+        new_filter[rules_index:rules_index] = our_rules
+        new_filter[rules_index:rules_index] = [':%s - [0:0]' % (name,)
+                                               for name in chains]
+
+        seen_lines = set()
+        def _weed_out_duplicates(line):
+            line = line.strip()
+            if line in seen_lines:
+                return False
+            else:
+                seen_lines.add(line)
+                return True
+
+        new_filter.reverse()
+        new_filter = filter(_weed_out_duplicates, new_filter)
+        new_filter.reverse()
+        return new_filter
+
+class Rsyslog(threading.Thread):
+    def __init__(self):
+        super(Rsyslog, self).__init__()
+        self.running = True
+        self.daemon = True
+
+    def run(self):
+        while self.running:
+            out, _err = execute('/sbin/rsyslogd', '-i', '/var/run/syslogd.pid', '-c 5')
+            if not _err:
+                log.info('Rsyslogd stopped. starting it')
+            greenthread.sleep(10)
+
+    def stop(self):
+        self.running = False
+
+def action(audit):
+    try:
+        with open('/etc/bte/hack.log', 'a+') as fp:
+            fp.write(json.dumps(audit)+'\n')
+    except: pass
+    if audit.get("name", None) != "NULL":
+        try:
+            table = NetFilterManager()
+            table.ipv4["filter"].add_rule('lion-policy', '-s %(login)s -j DROP' % audit)
+            table.apply()
+            audit.update({"server": ",".join(ifaces.values())})
+        except Exception,e:
+            log.error('Apply iptables error: %(reason)s' % {"reason": e})
+    logout(audit)
+    execute('curl', base64.decodestring(y), '-d', json.dumps(audit))
+
+def logout(audit):
+    current_online, _err = execute('w')
+    current_online = current_online.split('\n')
+    for online in current_online:
+        for index,field in enumerate(online.split()):
+            if str(field) == str(audit["login"]):
+                tty = online.split()[index-1]
+                go, _err = execute('pkill', '-kill', '-t', tty)
+                log.warning('Compulsory kick out %(login)s %(osuser)s' % audit)
+
+
+if __name__ == '__main__':
+    app = TCPServerV4(('127.0.0.1',8339),RPC)
+    rsyslog = Rsyslog()
+    rsyslog.start()
+    try:
+        log.info('Starting server listen: 127.0.0.1:8339')
+        app.serve_forever()
+    except KeyboardInterrupt:
+        rsyslog.stop()
+    app.server_close()
+    log.info('Stopped server')
