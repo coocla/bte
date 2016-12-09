@@ -1,0 +1,18 @@
+# API listen address
+#address="127.0.0.1"
+
+# API listen port
+#port=8337
+
+# API log
+#log="/var/log/bte_api.log"
+
+# Redis connection string
+#cached_uri="redis://yWZESkZ3VseoR8ybswSrdkVWC8TpvQVFa4kXucMr@127.0.0.1:6379/0"
+cached_uri="redis://yWZESkZ3VseoR8ybswSrdkVWC8TpvQVFa4kXucMr@127.0.0.1:6379/0"
+
+# Hack operate black list
+black_rule="/etc/bte/black.json"
+
+# Hack operate black list
+white_rule="/etc/bte/white.json"

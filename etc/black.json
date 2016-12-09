@@ -1,0 +1,12 @@
+{
+    "invalid_account": {"osuser": "root|fbsd|zone*|admin|hg|star|dzz|postgres|aswh|lctq"},
+    "invalid_cmd": {"cmd": "^useradd|^groupadd|^nc|^python -c|^curl |^whoami|^reboot|mysql.*-p\\S|^wget|^exec|^bash -i"},
+    "invalid_user": {"name": "xixi"},
+    "invalid_time": {"@time": "!:15:00~17:00"},
+
+    "test_mysql": {"cmd": "mysql.*-p\\S|^w "},
+
+    "default": {"rule": ["test_mysql", "invalid_user", "invalid_time"]},
+
+    "42.51.161.236": {"rule": ["not_root", "invalid_cmd"]}
+}

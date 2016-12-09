@@ -1,0 +1,5 @@
+{
+    "company": {"login": "124.127.138.35"},
+
+    "default": {"rule": ["company"]}
+}

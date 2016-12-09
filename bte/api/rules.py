@@ -53,8 +53,7 @@ class Hack(base.Base):
         minion = self.request.headers.get("X-Forwarded-For", self.request.headers.get("X-Real-Ip", self.request.remote_ip))
         #if self.check_hosts(minion):
         rule = self.generate_rule(minion)
-        return self.finish(escape.json_encode(rule))
-        self.write('{}')
+        return self.finish(rule)
 
     def generate_rule(self, minion):
         BLACK_RULE = cache.get('rule_policy_black') or {}

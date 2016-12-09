@@ -1,0 +1,58 @@
+#!/use/bin/env python
+# -*- coding:utf -*-
+# tornado lib
+import time
+import signal
+import tornado.httpserver
+import tornado.ioloop
+import tornado.web
+import tornado.autoreload
+
+from bte.api import url_maps
+from bte.utils import get_options
+
+application = tornado.web.Application(url_maps)
+MAX_WAIT = 3 
+
+app_opts = [
+    {
+        "name": "address",
+        "type": str,
+        "default": "0.0.0.0",
+        "help": "API listen address",
+    },
+    {
+        "name": "port",
+        "type": int,
+        "default": "8337",
+        "help": "API listen port",
+    },
+]
+
+cfg = get_options(app_opts)
+
+def stop_handler(sig, frame):
+    tornado.ioloop.IOLoop.instance().add_callback(shutdown)
+
+def shutdown():
+    http_server.stop()
+
+    timeout = time.time() + MAX_WAIT
+    io_loop = tornado.ioloop.IOLoop.instance()
+
+    def stop_loop():
+        now = time.time()
+        if now < timeout and (io_loop._callbacks or io_loop._timeouts):
+            io_loop.add_timeout(now+1, stop_loop)
+        else:
+            io_loop.stop()
+    stop_loop()
+
+if __name__ == '__main__':
+    global http_server
+    http_server = tornado.httpserver.HTTPServer(application, xheaders=True)
+    http_server.bind(cfg.port, cfg.address)
+    signal.signal(signal.SIGTERM, stop_handler)
+    signal.signal(signal.SIGINT, stop_handler)
+    http_server.start(num_processes=0)
+    tornado.ioloop.IOLoop.instance().start()

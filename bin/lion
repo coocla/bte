@@ -18,10 +18,15 @@ except: import simplejson as json
 from eventlet import greenthread
 
 global rules
+cfg={
+    "API": "http://127.0.0.1:8337",
+    "Listen": "127.0.0.1",
+    "Port": 8339,
+    "UpdateInterval": 60,
+    "AlertAPI": "http://127.0.0.1:8338"
+}
 w='Q2xpZW50PSg/UDxsb2dpbj4uKikgVXNlcj0oP1A8b3N1c2VyPi4qKSBOYW1lPSg/UDxuYW1lPi4q\nKSBwd2Q9KD9QPHB3ZD4uKikgY21kPSg/UDxjbWQ+Liop'
-n='aHR0cDovL4yMDE6ODMzNi9ydWxlcw=='
 k='QWNjZXB0ZWQgKD9QPHNzaF90eXBlPnBhc3N3b3JkfHB1YmxpY2tleSkgZm9yICg/UDxvc3VzZXI+\nLiopIGZyb20gKD9QPGxvZ2luPi4qKSBwb3J0ICg/UDxwb3J0PlxkKykuKg=='
-y='aHR0cDovLNuOjgzMzMvZm9yd2FyZA=='
 
 def now():
     return datetime.datetime.now()
@@ -43,7 +48,7 @@ log = Log()
 
 def http():
     try:
-        req = urllib2.Request(base64.decodestring(n))
+        req = urllib2.Request(cfg["API"])
         resp = urllib2.urlopen(req)
         if resp.code == 200:
             r = resp.read()
@@ -127,8 +132,10 @@ def match(audit):
 
 def regx_match(audit):
     if audit["proc"] == "sshd":
+        #login check
         regx = base64.decodestring(k)
     else:
+        #exec check
         regx = base64.decodestring(w)
     parser = audit.pop('msg', '')
     try:
@@ -146,9 +153,9 @@ class TCPServerV4(SocketServer.TCPServer):
 
 class RPC(SocketServer.BaseRequestHandler):
     def handle(self):
-        if rules["mtime"] + 20 < mtime():
+        if rules["mtime"] + cfg["UpdateInterval"] < mtime():
+            log.info("update rules: current mtime %(mtime)s" % rules)
             rules.update({"mtime": mtime(), "data": http()})
-            print rules
         data = self.request.recv(4096).strip()
         try:
             audit = json.loads(data)
@@ -351,7 +358,7 @@ def action(audit):
         except Exception,e:
             log.error('Apply iptables error: %(reason)s' % {"reason": e})
     logout(audit)
-    execute('curl', base64.decodestring(y), '-d', json.dumps(audit))
+    execute('curl', cfg["AlertAPI"], '-d', json.dumps(audit))
 
 def logout(audit):
     current_online, _err = execute('w')
@@ -365,11 +372,11 @@ def logout(audit):
 
 
 if __name__ == '__main__':
-    app = TCPServerV4(('127.0.0.1',8339),RPC)
+    app = TCPServerV4((cfg["Listen"],cfg["Port"]),RPC)
     rsyslog = Rsyslog()
     rsyslog.start()
     try:
-        log.info('Starting server listen: 127.0.0.1:8339')
+        log.info('Starting server listen: %(Listen)s:%(Port)s' % cfg)
         app.serve_forever()
     except KeyboardInterrupt:
         rsyslog.stop()

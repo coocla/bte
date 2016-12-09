@@ -16,15 +16,13 @@ cache_opts = [
         "default": '3600',
         "help": 'cache timeout seconds',
         "type": str,
-    }]
+    }
+]
+cfg = get_options(cache_opts)
 
 class Backend(object):
     def __init__(self, cfg=None):
-        if cfg is None:
-            self.cfg = get_options(cache_opts)
-        else:
-            self.cfg = cfg
-        conn_str = self.cfg.cached_uri
+        conn_str = cfg.cached_uri
         backend_auth, host_db = conn_str.split('@')
         passwd = backend_auth.split('://')[-1]
         host, port_db = host_db.split(':')
@@ -51,7 +49,7 @@ class Backend(object):
         Set obj into redis-server.
         Expire 3600 sec
         """
-        timeout = timeout or self.cfg.cache_timeout
+        timeout = timeout or cfg.cache_timeout
         try:
             if user_msg:
                 msg = cPickle.dumps({"msg": user_msg})
