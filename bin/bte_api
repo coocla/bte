@@ -7,6 +7,7 @@ import tornado.httpserver
 import tornado.ioloop
 import tornado.web
 import tornado.autoreload
+from tornado.options import parse_config_file
 
 from bte.api import url_maps
 from bte.utils import get_options
@@ -27,6 +28,13 @@ app_opts = [
         "default": "8337",
         "help": "API listen port",
     },
+    {
+        "name": "config",
+        "type": str,
+        "default": "/etc/bte/config",
+        "callback": lambda p: parse_config_file(p, final=False),
+        "help": "Path of config file.",
+    }
 ]
 
 cfg = get_options(app_opts)
