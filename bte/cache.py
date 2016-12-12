@@ -8,7 +8,7 @@ from bte.utils import get_options
 cfg = get_options(app_opts)
 
 class Backend(object):
-    def __init__(self, cfg=None):
+    def __init__(self):
         conn_str = cfg.cached_uri
         backend_auth, host_db = conn_str.split('@')
         passwd = backend_auth.split('://')[-1]
