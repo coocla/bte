@@ -2,23 +2,10 @@
 import redis
 import cPickle
 
+from bte.settings import app_opts
 from bte.utils import get_options
 
-cache_opts = [
-    {
-        "name": "cached_uri",
-        "default": 'redis://yWZESkZ3VseoR8ybswSrdkVWC8TpvQVFa4kXucMr@127.0.0.1:6379/0',
-        "help": 'cached backend uri',
-        "type": str,
-    },
-    {
-        "name": 'cache_timeout',
-        "default": '3600',
-        "help": 'cache timeout seconds',
-        "type": str,
-    }
-]
-cfg = get_options(cache_opts)
+cfg = get_options(app_opts)
 
 class Backend(object):
     def __init__(self, cfg=None):
